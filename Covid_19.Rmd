@@ -14,9 +14,6 @@ knitr::opts_chunk$set(echo = TRUE)
 # Abstract
 
 
-```{r}
-
-```
 
 # Introduction
 
@@ -54,19 +51,50 @@ covid_data_cleaned <- covid_19[, !(names(covid_19) %in% c("new_cases", "new_case
                                     "total_boosters_per_hundred", "new_vaccinations_smoothed_per_million", 
                                     "new_people_vaccinated_smoothed", "new_people_vaccinated_smoothed_per_hundred"))]
 
+
+covid_data_cleaned <- covid_data_cleaned %>%
+  select(-starts_with("excess"))
+
 ```
 
+
+
 ```{r}
+
+# Filter dataset and select the first date when total_cases is at least 1
 covid_data_initial_cases <- covid_data_cleaned %>%
   filter(total_cases >= 1) %>%
   group_by(location) %>%
-  arrange(date # Keep only the first observation per country
+  arrange(date) %>%
+  slice(1) %>%   # Keep only the first observation per country
   ungroup()
 
 # View the cleaned dataset
-head(covid_data_initial_cases), descending = T) %>%
-  slice(1) %>%  
+head(covid_data_initial_cases)
 ```
+
+```{r}
+library(dplyr)
+
+# Define the percentage threshold
+threshold_pct <- 20  # Set percentage threshold, e.g., 20%
+threshold <- ncol(covid_data_initial_cases) * threshold_pct / 100  # Calculate the number of NAs corresponding to the percentage
+
+# Step 1: Remove rows with more missing values than the threshold
+covid_data_initial_cases <- covid_data_initial_cases %>%
+  filter(apply(., 1, function(x) sum(is.na(x)) <= threshold))  # Use apply to check each row
+
+# Step 2: Impute remaining NAs with the median of each column
+covid_data_initial_cases <- covid_data_initial_cases %>%
+  mutate(across(everything(), ~ ifelse(is.na(.), median(., na.rm = TRUE), .)))
+
+# View the cleaned and imputed data
+print(covid_data_initial_cases)
+
+```
+
+
+
 ```{r}
 
 # Group by country, filter for the maximum total cases, and select the latest date if tied
@@ -81,12 +109,90 @@ covid_data_max_cases <- covid_data_cleaned %>%
 head(covid_data_max_cases)
 
 ```
-We don't have enough data so we used the dataset combined with 'kaggle.com'. We use the original dataset for the total number of cases and the new dataset to get the economic factors which we want to use for predicting. This effectively prevents us form having a lot of NaNs as in the original dataset.
+
+Merging these dataframes:
 
 ```{r}
-covid_19 <- read.csv("Data/covid_data.csv")
+
+covid_data_model<-merge(covid_data_initial_cases, covid_data_max_cases[, c("location", "total_cases")], by.x = "location", by.y = "location")
+
+covid_data_model <- covid_data_model %>%
+  select(-total_cases.x, -date)
+#dummify continent:
+library(dplyr)
+
+# Create dummy variables manually
+covid_data_model <- covid_data_model %>%
+  mutate(
+    continent_Africa = ifelse(continent == "Africa", 1, 0),
+    continent_Asia = ifelse(continent == "Asia", 1, 0),
+    continent_Europe = ifelse(continent == "Europe", 1, 0),
+    continent_North_America = ifelse(continent == "North America", 1, 0),
+    continent_Oceania = ifelse(continent == "Oceania", 1, 0),
+    continent_South_America = ifelse(continent == "South America", 1, 0)
+  ) %>%
+  select(-continent)  # Optionally, remove the original 'continent' column
+
+# View the resulting dataframe
+head(covid_data_model)
 
 ```
+
+
+
+
+
+
+
+```{r}
+# Assuming your dataset is named df
+
+# Step 1: Select columns 7 to 21 for interaction terms
+df_selected <- covid_data_max_cases[, 7:21]  # Select columns 7 to 21
+
+# Step 2: Create pairwise interactions
+df_pairwise <- model.matrix(~ .^2, data = df_selected)  # This generates pairwise interactions
+
+# Step 3: Create three-way interactions
+#df_three_way <- model.matrix(~ .^3, data = df_selected)  # This generates pairwise + three-way interactions
+
+# Step 4: Combine the interactions with the original dataset (if needed)
+#df_with_interactions <- cbind(df, df_pairwise[, -1], df_three_way[, -(1:ncol(df_selected))])
+df_with_interactions <- cbind(df, df_pairwise[, -1])  # Remove the intercept column
+# The combined dataset now has the original features plus interactions
+print(head(df_with_interactions))  # View the first few rows of the new dataset
+
+```
+
+
+
+We don't have enough data so we used the dataset combined with 'kaggle.com/datset'. We use the original dataset for the total number of cases and the new dataset to get the economic factors which we want to use for predicting. This effectively prevents us form having a lot of NaNs as in the original dataset.
+
+```{r}
+covid_19 <- read.csv("Data/World Data Set.csv")
+
+```
+
+```{r}
+covid_19<-read.csv("Data/a524ed10-4f8e-4548-bdf2-ef21ef85df39_Data.csv")
+```
+
+```{r}
+library(tidyverse)
+df_wide <- covid_19 %>%
+  pivot_wider(
+    names_from = `Series.Name`,         # Column to use as new column names
+    values_from = `X2019..YR2019.`,        # Column with values to fill those new columns
+    id_cols = c(`Country.Name`, `Country.Code`)  # Columns to keep as identifiers
+  )
+
+# View the transformed data
+print(df_wide)
+
+```
+
+
+
 # Data preperation
 
 
