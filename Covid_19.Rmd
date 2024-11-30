@@ -191,11 +191,12 @@ We use function `cv.glmnet` to select a $\lambda$ via 10-fold cross-validation. 
 ```{r}
 y <- covid_19$total_cases.y
 
-print(sum(is.na(data$total_cases)))
+print(sum(is.na(y)))
 x <- covid_19[, names(covid_19) != "total_cases.y"]
 fit.lasso <- cv.glmnet(x = x, y = y, nfolds = 10) #SHOULD WE EXCLUDE THE INTERCEPT LIKE IN SEMINAR1
 summary(fit.lasso)
 ```
+
 ```{r}
 fit.mle <- lm(y ~x) #1st column in x is the intercept, automatically added by lm
 fit.mle <- lm(y ~ x]) #1st column in x is the intercept, automatically added by lm
