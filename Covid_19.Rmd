@@ -185,7 +185,7 @@ summary(fit.mle)
 ```
 
 # Lasso
-
+TEST
 We use function `cv.glmnet` to select a $\lambda$ via 10-fold cross-validation. The intercept is automatically included, hence we use `x[,-1]` to exclude the first column from `x` (that containing the intercept). `alpha` is by default set at 1, so we are fitting a LASSO regression. Of all the tried values for $\lambda$ `cv.glmnet` outputs two "best" ones.
 
 ```{r}
