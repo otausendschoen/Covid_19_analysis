@@ -29,11 +29,14 @@ library(glmnet)
 
 ```{r}
 data<-read.csv("/home/oliver/Documents/Statisticcal_Modelling_Project/Data/covid_data.csv")
+#source("routines_seminar1.R")
+
 ```
 
 
 ```{r}
 head(data)
+print(sum(is.na(data$total_cases)))
 ```
 Drop Columns that have information about Covid Included.
 
@@ -69,6 +72,10 @@ initial_cases <- covid_19 %>%
   arrange(date) %>%
   slice(1) %>%   # Keep only the first observation per country
   ungroup()
+max_date <- covid_19 %>%
+  group_by(location) %>%
+  slice_max(total_cases, n = 1, with_ties = FALSE) %>% 
+  ungroup()
 
 # View the cleaned dataset
 head(initial_cases)
@@ -96,19 +103,17 @@ print(initial_cases)
 
 
 ```{r}
-
-# Group by country, filter for the maximum total cases, and select the latest date if tied
 max_date <- covid_19 %>%
+  filter(!is.na(total_cases)) %>% # Remove rows with NA in total_cases
   group_by(location) %>%
-  arrange(desc(date)) %>% 
-  #filter(total_cases == max(total_cases, na.rm = TRUE)) %>%
-  #arrange(desc(date)) %>% 
-  slice(1) %>% # Keep only the latest observation per country in case of ties
+  slice_max(total_cases, n = 1, with_ties = FALSE) %>% 
   ungroup()
 
 # View the resulting dataset
 head(max_date)
+print(sum(is.na(max_date$total_cases)))
 
+df_with_nans <- max_date[is.na(max_date$total_cases), ]
 ```
 
 Merging these dataframes:
@@ -170,6 +175,7 @@ covid_19 <- cbind(covid_19, covid_19_temp[, -1])  # Remove the intercept column
 
 
 ```{r}
+covid_19 <- covid_19[covid_19$location != "World", ]
 covid_19_countries<-covid_19 #safe covid_19 with countries
 covid_19 <- covid_19[, !names(covid_19) %in% c("location", "iso_code")]
 
@@ -177,31 +183,82 @@ covid_19 <- covid_19 %>%
   mutate(across(where(is.character), as.numeric))  # Convert character columns to numeric
 ```
 
+# Scaling
+
+```{r}
+# Separate the target variable
+y <- covid_19$total_cases
+
+# Select predictors (all columns except the target)
+x <- covid_19[, names(covid_19) != "total_cases"]
+# Standardize the predictors (mean 0, std. dev. 1)
+x <- scale(x)
+
+# Combine scaled predictors with the unscaled target
+covid_19 <- cbind(x, total_cases = y)
+covid_19<- as.data.frame(covid_19)
+
+```
+
+# Part 1
+
+
 # MLE
 ```{r}
 fit.mle <- lm(covid_19$total_cases.y ~., data = covid_19) #1st column in x is the intercept, automatically added by lm
 b.mle <- coef(fit.mle)
 summary(fit.mle)
 ```
+1. It completely overfits
+2. There are some NANs, posssibly indicating multicollinearity
+Let's check the covariance matrix of 'base' predictors:
+
+```{r}
+
+#cor(initial_cases)
+
+```
+
+
+Let's check the covariance matrix of full data:
+
+```{r}
+# Correlation between predictors and the target
+cor_matrix <- cor(x, y)
+# View summary of correlations
+summary(cor_matrix)
+```
+
+```{r}
+cor(covid_19)[23:40,20:40]
+
+```
+Example:
+median_age.1 and aged_65_older.1 are highly correlated (0.91) – aged_65_older.1 could potentially be removed if median_age.1 is already well-representative.
+aged_65_older.1 and aged_70_older.1 are also highly correlated (0.98) – You could consider removing one of these two, based on your model's needs.
+gdp_per_capita.1 and human_development_index.1 have a strong positive correlation (0.75) – Consider removing one if they overlap in meaning for your analysis.
+
+Let's see how ridge and lasso deal with this. In general, What happens when predictors are highly correlated is that the Ridge penalty tends to shrink the coefficients of correlated predictors towards each other, while the LASSO tends to pick one of them and discard the others. 
+
 
 # Lasso
-TEST
-We use function `cv.glmnet` to select a $\lambda$ via 10-fold cross-validation. The intercept is automatically included, hence we use `x[,-1]` to exclude the first column from `x` (that containing the intercept). `alpha` is by default set at 1, so we are fitting a LASSO regression. Of all the tried values for $\lambda$ `cv.glmnet` outputs two "best" ones.
+
+We first try LASSO regression.We will use the `glmnet` package that implements LASSO, Ridge and ElasticNet
+penalizations for linear regression with Gaussian errors and generalized
+linear models (logistic, multinomial, Poisson, Cox).d
+
+We use function `cv.glmnet` to select a $\lambda$ via 10-fold cross-validation.  `alpha` is by default set at 1, so we are fitting a LASSO regression. Of all the tried values for $\lambda$ `cv.glmnet` outputs two "best" ones.
+
+
+When $p$ is large in comparison to $n$, MLE estimator variance can be very large due to estimating too many parameters. When $p$ is larger than $n$, OLS fails.
 
 ```{r}
-y <- covid_19$total_cases.y
-
-print(sum(is.na(y)))
-x <- covid_19[, names(covid_19) != "total_cases.y"]
+y_scaled <- scale(y) #alternatively also scale y
+x_matrix <- as.matrix(x)#[, sapply(covid_19, is.numeric)])
 fit.lasso <- cv.glmnet(x = x, y = y, nfolds = 10) #SHOULD WE EXCLUDE THE INTERCEPT LIKE IN SEMINAR1
-summary(fit.lasso)
+fit.lasso
 ```
 
-```{r}
-fit.mle <- lm(y ~x) #1st column in x is the intercept, automatically added by lm
-fit.mle <- lm(y ~ x]) #1st column in x is the intercept, automatically added by lm
-
-```
 
 We can plot the estimated mean squared prediction error $\widehat{MSPE}$ against the tried values of $\lambda$ (in logarithmic scale). Since $\widehat{MSPE}$ is a data-based estimate, we also plot its standard errors. At the top we see the number of coefficients estimated nonzero for the different values of $\lambda$.
 
@@ -209,14 +266,145 @@ We can plot the estimated mean squared prediction error $\widehat{MSPE}$ against
 plot(fit.lasso)
 ```
 
-We now switch to LASSO regression.We will use the `glmnet` package that implements LASSO, Ridge and ElasticNet
-penalizations for linear regression with Gaussian errors and generalized
-linear models (logistic, multinomial, Poisson, Cox).
+We can check how many values of $\lambda$ were assessed, and the value deemed to be optimal according to cross-validation.
+```{r}
+length(fit.lasso$lambda)
+fit.lasso$lambda.min
+```
+We can also plot the estimated $\hat{\beta}_\lambda$ for all considered $\lambda$.
+```{r}
+plot(fit.lasso$glmnet.fit, xvar = 'lambda')
+```
+
+We retrieve the estimated coefficients $\hat{\beta}_{\hat{\lambda}}$ with the `coef` function. The argument `s='lambda.min'` indicates to set $\hat{\lambda}$ to the value minimizing $\widehat{MSPE}$. By default `coef` uses $\hat{\lambda}_{1SE}= \hat{\lambda} + \mbox{SE} \hat{\lambda}$.
+```{r}
+b.lasso <- as.vector(coef(fit.lasso, s='lambda.min'))
+round(b.lasso, 3)
+```
+
+ADD INTERPRETATION HERE:
+EVERYTHING SHRINKED TO 0 except 1 ?
+## Lasso with BIC?
+## Via BIC and Extended BIC (EBIC)
+
+We repeat the analyses for LASSO setting $\lambda$ via BIC. We use function the`lasso.bic` from `routines_seminar1.R`.
+
+```{r}
+
+lasso.bic <- function(y,x,extended=FALSE) {
+  #Select model in LASSO path with best BIC (using LASSO regression estimates)
+  #Input
+  # - y: vector with response variable
+  # - x: design matrix
+  #
+  #Output: list with the following elements
+  # - coef: LASSO-estimated regression coefficient with lambda set via BIC
+  # - ypred: predicted y
+  # - lambda.opt: optimal value of lambda
+  # - lambda: data.frame with bic and number of selected variables for each value of lambda
+  require(glmnet)
+  fit <- glmnet(x=x,y=y,family='gaussian',alpha=1)
+  pred <- cbind(1,x) %*% rbind(fit$a0,fit$beta)
+  n <- length(y)
+  p <- colSums(fit$beta!=0) + 1
+  if (!extended){
+    bic <- n * log(colSums((y-pred)^2)/length(y)) + n*(log(2*pi)+1) + log(n)*p 
+  } else {
+    bic <- n * log(colSums((y-pred)^2)/length(y)) + n*(log(2*pi)+1) + log(n)*p + 2*log(choose(ncol(x),p))
+  }
+  sel <- which.min(bic)
+  beta <- c(fit$a0[sel],fit$beta[,sel]); names(beta)[1]= 'Intercept'
+  ypred <- pred[,sel]
+  ans <- list(coef=beta,ypred=ypred,lambda.opt=fit$lambda[sel],lambda=data.frame(lambda=fit$lambda,bic=bic,nvars=p))
+  return(ans)
+}
+```
+To use the BIC criteria, we set `extended=FALSE`.
+```{r}
+fit.lassobic <- lasso.bic(y = y, x = x,extended = FALSE)
+b.lassobic <- fit.lassobic$coef
+names(fit.lassobic)
+```
+
+To use the EBIC criteria, we set `extended=TRUE`.
+```{r}
+fit.lassoebic <- lasso.bic(y = y,x = x,extended = TRUE)
+b.lassoebic <- fit.lassoebic$coef
+names(fit.lassoebic)
+
+```
+
+```{r}
+b.lassobic <- fit.lassobic$coef
+be.lasso <- as.vector(b.lassobic <- fit.lassobic$coef)
+round(b.lasso, 3)
+```
 
 
-# Data preperation
+```{r}
+
+b.lassobic <- fit.lassoebic$coef
+
+b.lasso <- as.vector(b.lassobic)
+round(b.lasso, 3)
+```
+# Ridge
+
+## Setting penalization parameter $\lambda$
+
+To set $\lambda$ by cross-validation we use the function `cv.glmnet` again but this time setting parameter `alpha` to 0.
+
+```{r}
+fit.ridge <- cv.glmnet(x = x, y = y, alpha = 0, nfolds = 10)
+fit.ridge
+```
+
+We plot the estimated mean squared prediction error $\widehat{MSPE}$ as a function of $\lambda$.
+
+```{r}
+plot(fit.ridge)
+```
+
+We plot the cofficient path and see that, this time, all estimated coefficients shrink as $\lambda$ grows but remain non-zero.   
+
+```{r}
+plot(fit.ridge$glmnet.fit, xvar='lambda')
+```
+
+```{r}
+b.ridge <- as.vector(coef(fit.ridge, s = 'lambda.min'))
+round(b.ridge, 3)
+```
+Compare it to MLE coef
+```{r}
+b.mle <- as.vector(coef(fit.mle))
+print(b.mle, round = 3)
+```
 
 
 
-## Setup
+# Lasso and BIC with custom OUT OF SAMPLE CV to choose Lambda HERE????
 
+
+## comparisons
+
+```{r}
+bols= summary(fit.mle)$coef
+pvalue= round(bols[,4],4)
+col= ifelse(pvalue < 0.05,'red','black')
+
+data.frame(mle = coef(fit.mle)[-1], lassobic = b.lassobic) %>% 
+  ggplot(aes(x = mle,y = lassobic)) + 
+  geom_point(col = col[-1], shape = "O", size=2) +
+  geom_abline(slope = 1, intercept = 0, linetype = 'dashed') +
+  geom_hline(yintercept = 0, linetype = 'dotted') +
+  xlab('OLS') +
+  ylab('LASSO (Lambda BIC)') +
+  coord_cartesian(xlim = c(-2,0.5),ylim = c(-2,0.5)) +
+  theme_classic()
+
+```
+#
+
+
+INSER
